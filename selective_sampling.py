@@ -8,96 +8,152 @@
 # K: number of teachers
 # y: label for x
 # theta: threshold
-
-
-import math
+import random
 import numpy as np
+
 
 tau = 0.3
 alpha = 0.1
-num_inputs = 2000
-input_shape = (1, 136)
-y = np.array()  # shape [j, t] queried label of instance x_t from teacher j
-y_hat = np.array()  # shape [t, 1] predicted answer from learner 
+input_shape = (130, 1)
+
+train_file = "./data/toy.txt"
+
+
+def preprocess(train_file):
+    train_data = np.loadtxt(train_file)
+    print('train data:', train_data.shape)
+    X_train = train_data[:, 2:]
+    y_train = train_data[:, 0].astype(int)
+    q_ids = train_data[:, 1].astype(int)
+    print('X ', X_train.shape, 'y ', y_train.shape, 'q ids ', q_ids.shape)
+    # print(X_train[0], y_train[0], q_ids[0])
+    # normalize
+    for i in range(X_train.shape[0]):
+        X_train[i] = X_train[i] / np.linalg.norm(X_train[i])
+    # print(X_train[0])
+    return X_train, y_train, q_ids
+    # SelectiveLearner(X_train)
+
+
+def teacher_train(y, q_ids, K):
+    teacher_knows = np.zeros([K, y.shape[0]])
+    q_type = np.unique(q_ids)
+    q_len = q_type.shape[0]
+    assign_queue = random.sample(list(q_type), q_len)
+    partition = q_len // 5
+    for j in range(K):
+        start = partition*j
+        end = start + partition
+        query_ids = assign_queue[start:end]
+        query_index = np.where(np.isin(q_ids, query_ids))[0]
+        teacher_knows[j][query_index] = y[query_index]
+
+    return teacher_knows
 
 
 class SelectiveLearner(object):
 
-    def init(self, K=5):
+    def __init__(self, X, teacher_knows, K=5):
+        self.X = X
         self.K = K  # number of teachers
+        self.teacher_knows = teacher_knows
+        num_samples, num_features = X.shape
+        self.w = np.zeros((K, num_samples, num_features))
+        self.A = np.zeros((K, num_samples, num_features, num_features))
+        for j in range(K):
+            self.A[j][0] = np.eye(num_features)
+        self.z_count = 0
 
-    def receive():
-        x = np.array()
-        return
+    def query(self, t, j):
+        label = self.teacher_knows[j, t]
+        if label == 0:
+            label = random.choice([-1, 1])
+        return label
 
+    def predict(self, delta_hat):
+        return np.sign(delta_hat)
 
-    def query(self, x, t, j):
-        # query label from teacher
-        return
-
-
-    A[j, 0] = np.identity()
-    w[j, 0] = 0
-
-
-    def predict(self, delta_hat, t):
-        return np.sign(delta_hat[t])
-
-
-    def selective_sampler(self, x, t):
+    def selective_sampler(self, t):
         # dealing with t_th instance x_t
-        x = receive()
-        for j in range(K):
-            theta_square[j, t] = alpha * x[t].T * np.linalg.inv(A[j,t-1]) * x[t] * np.log(1+t)
-            delta_hat[j, t] = w[j, t-1].T * x[t]
+        print("t:", t) 
+        theta_square = np.zeros(self.K)
+        print('theta_square:', theta_square)
+        delta = np.zeros(self.K)
+        for j in range(self.K):
+            theta_square[j] = alpha * np.dot(self.X[t].T, np.linalg.inv(self.A[j, t-1])).dot(self.X[t]) * np.log(1+t)
+            print('theta_square:', j, theta_square[j])
+            delta[j] = np.dot(self.w[j, t-1].T, self.X[t])
         theta = np.sqrt(theta_square)
-        j_hat[t] = np.argmax(np.absolute(delta_hat[:, t]), axis=1)
-        print('j_hat[t]:', j_hat[t])
-        C_hat[t] = []
-        H_hat[t] = []
-        for j in range(K):
-            c_bound = np.absolute(delta_hat[j_hat[t], t]) - tau - theta[j, t] - theta[j_hat[t], t]
-            if np.absolute(delta_hat[j, t]) >= c_bound:
-                C_hat[t].append(j)
-        max_theta = np.amax(theta[C_hat[t], t])
-        for i in C_hat[t]:
-            h_bound = np.absolute(delta_hat[j_hat[t], t]) - tau + theta[i, t] + max_theta
-            if np.absolute(delta_hat[j, t]) >= max_theta:
-                H_hat[t].append(i)
-        B_hat[t] = C_hat[t] - H_hat[t]
-        
-        y[j] = query()
-        y_hat[t] = self.predict(delat_hat, t)
-        # TODO: not sure with Z's criteria here
-        if True:
-            Z[t] = 1
-        else:
-            Z[t] = 0
-
-        if Z[t] == 1 and j in C_hat[t]:
-            y[j, t] = query(x, t, j)  # query y[j,t]
-            A[j, t] = A[j, t-1] + x[t] * x[t].T
-            r[j,t] = x[t].T * np.linalg.inv(A[j,t]) * x[t]
-            if np.absolute(delta_hat(j,t)) > 1:
-                tmp_w[j, t-1] = w[j, t-1] - np.sign(delta_hat[j,t]) * ( (np.absolute(delta_hat(j,t))-1)/(x[t].T*np.linalg.inv(A[j,t-1])*x[t])) * np.linalg.inv(A[j,t-1]) * x[t]
+        j_t = np.argmax(np.absolute(delta))
+        print('j_hat[t]:', j_t)
+        C = []
+        H = []
+        c_bound_base = np.absolute(delta[j_t]) - tau - theta[j_t]
+        for j in range(self.K):
+            c_bound = c_bound_base - theta[j]
+            if np.absolute(delta[j]) >= c_bound:
+                C.append(j)
+        # Is it possible for C to be None?
+        h_bound_base = np.absolute(delta[j_t]) - tau + np.amax(theta[C])
+        for i in C:
+            h_bound = h_bound_base + theta[i]
+            if np.absolute(delta[i]) >= h_bound:
+                H.append(i)
+        B = np.array(list(set(C) - set(H)))
+        delta_t = np.average(delta[C])
+        # why need to predict?
+        y_hat = self.predict(delta_t)
+        # get value of Z
+        Z = 0
+        print('B', B)
+        len_B = B.shape[0]
+        for i in range(2**len_B):
+            e = list(bin(i))[2:]
+            e = np.array(e) == '1'        
+            print('e:', e)
+            if len_B == 0:
+                S = []
             else:
-                tmp_w = w[j, t-1]
-            w[j,t] = np.linalg.inv(A[j,t]) * (A[j,t-1]*tmp_w + y[j,t]x[t])
+                S = B[len_B-len(e):][e]
+            SH = list(S).extend(list(H))
+            delta_sh = np.average(delta[SH])
+            theta_sh = np.average(theta[SH])
+            if delta_t * delta_sh <= 0 or np.absolute(delta_sh) < theta_sh:
+                Z = 1
+                break
+        self.z_count += Z
+        if Z == 1:
+            for j in C:
+                y = self.query(t, j)  # query y[j,t]
+                self.A[j, t] = self.A[j, t-1] + self.X[t] * self.X[t].T
+                tmp_w = self.w[j, t-1]
+                if np.absolute(delta[j]) > 1:
+                    tmp_w -= np.sign(delta[j]) * ((np.absolute(delta[j])-1)/(self.X[t].T*np.linalg.inv(self.A[j, t-1])*self.X[t])) * np.linalg.inv(self.A[j,t-1]) * self.X[t]
+                self.w[j, t] = np.dot(np.linalg.inv(self.A[j, t]), (self.A[j, t-1].dot(tmp_w) + y*self.X[t]))
         else:
-            A[j, t] = A[j, t-1]
-            r[j, t] = 0
-            w[j, t] = w[j, t-1]
+            self.A[j, t] = self.A[j, t-1]
+            self.w[j, t] = self.w[j, t-1]
+        # print(self.A[j,t])
 
-    def train(self, x):
-        for t in range(num_inputs):
-            self.selective_sampler(x, t)
+    def train(self):
+        for t in range(1, self.X.shape[0]+1):
+            self.selective_sampler(t)
+        print(self.z_count)
 
 
 if __name__ == '__main__':
-    instances = None
-    x = shape()
-    learner = SelectiveLearner()
-    for t in num_inputs:
-        learner.train(x)
+    # file_process(train_file)
+    X_train, y_train, q_ids = preprocess(train_file)
+    unique, counts = np.unique(y_train, return_counts=True)
+    print("y train:", np.asarray((unique, counts)).T)
+    unique, counts = np.unique(q_ids, return_counts=True)
+    q_ids_params = np.asarray((unique, counts)).T
+    print("q ids types:", q_ids_params.shape[0], 'max:', q_ids_params[:, 1].max(), 'min:', q_ids_params[:, 1].min())
+    K = 5
+    teacher_knows = teacher_train(y_train, q_ids, K)
+    learner = SelectiveLearner(X_train, teacher_knows, K)
+    learner.train()
+
+
 
 
