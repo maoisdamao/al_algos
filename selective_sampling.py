@@ -54,15 +54,20 @@ def teacher_train(y, q_ids, K):
 class SelectiveLearner(object):
 
     def __init__(self, X, teacher_knows, K=5):
-        self.X = X
         self.K = K  # number of teachers
-        self.teacher_knows = teacher_knows
-        num_samples, num_features = X.shape
-        self.w = np.zeros((K, num_samples, num_features))
-        self.A = np.zeros((K, num_samples, num_features, num_features))
+        # self.teacher_knows = teacher_knows
+        # print("shape of teacher knows:", teacher_knows.shape)
+        num_samples, num_features = (X.shape[0], X.shape[1])
+        self.X = np.insert(X, 0, np.zeros((num_features,)), axis=0)
+        self.teacher_knows = np.insert(teacher_knows, 0, 0, axis=1)
+        # print("shape of new teacher knows:", self.teacher_knows.shape)
+        # print("shape of inserted X:", self.X.shape)
+        self.w = np.zeros((K, num_samples+1, num_features))
+        self.A = np.zeros((K, num_samples+1, num_features, num_features))
         for j in range(K):
             self.A[j][0] = np.eye(num_features)
         self.z_count = 0
+        # import pdb;pdb.set_trace()
 
     def query(self, t, j):
         label = self.teacher_knows[j, t]
@@ -77,12 +82,14 @@ class SelectiveLearner(object):
         # dealing with t_th instance x_t
         print("t:", t) 
         theta_square = np.zeros(self.K)
-        print('theta_square:', theta_square)
+        # print('theta_square:', theta_square)
         delta = np.zeros(self.K)
         for j in range(self.K):
-            theta_square[j] = alpha * np.dot(self.X[t].T, np.linalg.inv(self.A[j, t-1])).dot(self.X[t]) * np.log(1+t)
-            print('theta_square:', j, theta_square[j])
+            # pinv do SVD
+            theta_square[j] = alpha * np.dot(self.X[t].T, np.linalg.pinv(self.A[j, t-1])).dot(self.X[t]) * np.log(1+t)
+            # print('theta_square:', j, theta_square[j])
             delta[j] = np.dot(self.w[j, t-1].T, self.X[t])
+        # print('theta_square:', theta_square)
         theta = np.sqrt(theta_square)
         j_t = np.argmax(np.absolute(delta))
         print('j_hat[t]:', j_t)
@@ -94,11 +101,13 @@ class SelectiveLearner(object):
             if np.absolute(delta[j]) >= c_bound:
                 C.append(j)
         # Is it possible for C to be None?
-        h_bound_base = np.absolute(delta[j_t]) - tau + np.amax(theta[C])
-        for i in C:
-            h_bound = h_bound_base + theta[i]
-            if np.absolute(delta[i]) >= h_bound:
-                H.append(i)
+        print("size of confidence set C:", len(C))
+        if len(C):
+            h_bound_base = np.absolute(delta[j_t]) - tau + np.amax(theta[C])
+            for i in C:
+                h_bound = h_bound_base + theta[i]
+                if np.absolute(delta[i]) >= h_bound:
+                    H.append(i)
         B = np.array(list(set(C) - set(H)))
         delta_t = np.average(delta[C])
         # why need to predict?
@@ -109,8 +118,8 @@ class SelectiveLearner(object):
         len_B = B.shape[0]
         for i in range(2**len_B):
             e = list(bin(i))[2:]
-            e = np.array(e) == '1'        
-            print('e:', e)
+            e = np.array(e) == '1'
+            # print('e:', e)
             if len_B == 0:
                 S = []
             else:
@@ -128,15 +137,16 @@ class SelectiveLearner(object):
                 self.A[j, t] = self.A[j, t-1] + self.X[t] * self.X[t].T
                 tmp_w = self.w[j, t-1]
                 if np.absolute(delta[j]) > 1:
-                    tmp_w -= np.sign(delta[j]) * ((np.absolute(delta[j])-1)/(self.X[t].T*np.linalg.inv(self.A[j, t-1])*self.X[t])) * np.linalg.inv(self.A[j,t-1]) * self.X[t]
-                self.w[j, t] = np.dot(np.linalg.inv(self.A[j, t]), (self.A[j, t-1].dot(tmp_w) + y*self.X[t]))
+                    inv_A = np.linalg.pinv(self.A[j, t-1])
+                    tmp_w -= np.sign(delta[j]) * ((np.absolute(delta[j])-1)/np.dot(self.X[t].T.dot(inv_A), self.X[t])) * inv_A.dot(self.X[t])
+                self.w[j, t] = np.dot(np.linalg.pinv(self.A[j, t]), (self.A[j, t-1].dot(tmp_w) + y*self.X[t]))
         else:
             self.A[j, t] = self.A[j, t-1]
             self.w[j, t] = self.w[j, t-1]
         # print(self.A[j,t])
 
     def train(self):
-        for t in range(1, self.X.shape[0]+1):
+        for t in range(1, self.X.shape[0]):
             self.selective_sampler(t)
         print(self.z_count)
 
